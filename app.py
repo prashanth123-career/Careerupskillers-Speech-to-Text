@@ -1,8 +1,11 @@
 import streamlit as st
-import onnxruntime as ort
 import numpy as np
-import wave
+import librosa
+import torch
+import torchaudio
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 import os
+from io import BytesIO
 
 # Set page configuration
 st.set_page_config(page_title="Speech-to-Text Transcription App", page_icon="🎙️", layout="centered")
@@ -45,60 +48,64 @@ st.markdown("""
 st.markdown("""
 <div class="header">
     <h1>🎙️ Speech-to-Text Transcription App</h1>
-    <p>Upload a .wav audio file to transcribe it using an ONNX-based speech-to-text model.</p>
+    <p>Upload an audio file to transcribe it using a pre-trained speech-to-text model.</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Load the ONNX model
+# Load the pre-trained model and processor
 @st.cache_resource
 def load_model():
     try:
-        session = ort.InferenceSession("models/speech_to_text_model.onnx")
-        return session
+        # Using a small pre-trained model for demonstration
+        processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+        model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+        return processor, model
     except Exception as e:
-        st.error(f"Failed to load the ONNX model: {str(e)}")
-        return None
+        st.error(f"Failed to load the model: {str(e)}")
+        return None, None
 
-session = load_model()
-if session is None:
-    st.stop()
+processor, model = load_model()
 
-# File uploader for audio
-uploaded_file = st.file_uploader("Upload a .wav audio file", type=["wav"])
-
-if uploaded_file is not None:
-    # Save the uploaded file temporarily
-    temp_file_path = "temp_audio.wav"
-    with open(temp_file_path, "wb") as f:
-        f.write(uploaded_file.read())
-
-    # Play the uploaded audio
-    st.audio(temp_file_path, format="audio/wav")
-
-    # Transcribe the audio
+def transcribe_audio(audio_bytes):
     try:
-        with wave.open(temp_file_path, "rb") as wf:
-            audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        # Convert bytes to numpy array
+        audio_input, sample_rate = librosa.load(BytesIO(audio_bytes), sr=16000, mono=True)
         
-        # Ensure the audio input is in the correct shape for the model
-        # Note: You may need to adjust the input shape based on your model's requirements
-        audio_input = np.expand_dims(audio, axis=0).astype(np.float32)
+        # Process the audio
+        input_values = processor(audio_input, sampling_rate=sample_rate, return_tensors="pt").input_values
         
-        # Run inference
-        with st.spinner("Transcribing audio..."):
-            output = session.run(None, {"audio_input": audio_input})[0]
+        # Perform inference
+        with torch.no_grad():
+            logits = model(input_values).logits
         
-        # Display the transcription
-        st.markdown("### Transcription Result")
-        st.markdown(f'<div class="transcription-box">{output}</div>', unsafe_allow_html=True)
-
+        # Decode the output
+        predicted_ids = torch.argmax(logits, dim=-1)
+        transcription = processor.batch_decode(predicted_ids)[0]
+        
+        return transcription
     except Exception as e:
         st.error(f"Error during transcription: {str(e)}")
+        return None
 
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+# File uploader for audio
+uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "ogg"])
+
+if uploaded_file is not None:
+    # Display audio player
+    st.audio(uploaded_file, format='audio/wav')
+    
+    # Transcribe button
+    if st.button("Transcribe Audio"):
+        with st.spinner("Transcribing audio..."):
+            # Read the uploaded file
+            audio_bytes = uploaded_file.read()
+            
+            # Transcribe
+            transcription = transcribe_audio(audio_bytes)
+            
+            if transcription:
+                st.markdown("### Transcription Result")
+                st.markdown(f'<div class="transcription-box">{transcription}</div>', unsafe_allow_html=True)
 
 # Add a button to restart
 if st.button("Transcribe Another Audio"):
