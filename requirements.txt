@@ -1,3 +1,7 @@
-streamlit==1.36.0
-onnxruntime==1.18.1
-numpy==1.26.4
+streamlit==1.32.2
+torch==2.1.2
+torchaudio==2.1.2
+transformers==4.37.2
+librosa==0.10.1
+numpy==1.26.3
+soundfile==0.12.1
